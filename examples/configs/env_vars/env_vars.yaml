@@ -10,3 +10,4 @@ datasets:
     pusht: ${env_vars.dataset_path}/pusht
     ur3: ${env_vars.dataset_path}/ur3
     clean: /home/jellyho/clean
+    trasport: /share0/jellyho/datasets/transport

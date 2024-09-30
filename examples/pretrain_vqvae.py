@@ -28,7 +28,8 @@ def main(cfg):
         entity=cfg.wandb.entity,
         config=OmegaConf.to_container(cfg, resolve=True),
     )
-    run_name = run.name or "Offline"
+    # run_name = run.name or "Offline"
+    run.name = cfg.run_name
     save_path = Path(cfg.save_path) / run_name
     save_path.mkdir(parents=True, exist_ok=False)
 
