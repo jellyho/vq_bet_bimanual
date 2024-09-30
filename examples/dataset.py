@@ -12,6 +12,7 @@ import pathlib
 import tqdm
 import struct
 import torch.nn.functional as F
+import glob, os
 
 
 # loads h5 data into memory for faster access
@@ -264,6 +265,115 @@ class AntTrajectoryDataset(TensorDataset, TrajectoryDataset):
         T = self.masks[idx].sum().int().item()
         return tuple(x[idx, :T] for x in self.tensors)
 
+class BimanualTrajectoryDataset(TrajectoryDataset):
+    def __init__(self, data_directory, device="cuda", onehot_goals=False, action_key='joint_pos'):
+        # data_directory = Path(data_directory)
+        self.file_list = glob.glob(os.path.join(data_directory, "*.hdf5"))
+
+        self._actions = []
+        self._observations = []
+
+        print('Dataset Loading')
+
+        for fname in tqdm.tqdm(self.file_list):
+            f = h5py.File(fname, 'r')
+            # print(f['action'].keys())
+            # self._actions.append(f['action'][str(action_key)][()])
+            self._actions.append(np.vstack((f['action'][()][:, :7], f['action'][()][:, 7:])))
+            # self._observations.append(f['observations']['images']['angle'][()])
+            self._observations.append(np.vstack((f['action'][()][:, :7], f['action'][()][:, 7:])))
+
+        self.actions = np.concatenate(self._actions)
+
+    def __len__(self):
+        return len(self.file_list)
+
+    def get_seq_length(self, idx):
+        # f = h5py.File(self.file_list[idx], 'r')
+        return int(len(self._actions[idx]))
+        # return int(len(f['action']))
+
+    def __getitem__(self, idx):
+        # f = h5py.File(self.file_list[idx], 'r')
+        # return torch.Tensor(f['observations']['images']['angle'][()]), torch.Tensor(np.vstack((f['action'][()][:, :7], f['action'][()][:, 7:])))
+        return torch.Tensor(self._observations[idx]).cuda(), torch.Tensor(self._actions[idx]).cuda()
+
+class BimanualBasicTrajectoryDataset(TrajectoryDataset):
+    def __init__(self, data_directory, device="cuda", onehot_goals=False, action_key='joint_pos'):
+        # data_directory = Path(data_directory)
+        self.file_list = glob.glob(os.path.join(data_directory, "*.hdf5"))
+
+        self._actions = []
+        self._observations = []
+
+        print('Dataset Loading', action_key)
+
+        for fname in tqdm.tqdm(self.file_list):
+            f = h5py.File(fname, 'r')
+            # print(f.keys())
+            # print(f['action'].keys())
+            self._actions.append(f['action'][()])
+            self._observations.append(f['action'][()])
+            # self._actions.append(np.vstack((f['action'][()][:, :7], f['action'][()][:, 7:])))
+            # self._observations.append(f['observations']['images']['angle'][()])
+            # self._observations.append(np.vstack((f['action'][()][:, :7], f['action'][()][:, 7:])))
+
+        self.actions = np.concatenate(self._actions)
+
+    def __len__(self):
+        return len(self.file_list)
+
+    def get_seq_length(self, idx):
+        # f = h5py.File(self.file_list[idx], 'r')
+        return int(len(self._actions[idx]))
+        # return int(len(f['action']))
+
+    def __getitem__(self, idx):
+        # f = h5py.File(self.file_list[idx], 'r')
+        # return torch.Tensor(f['observations']['images']['angle'][()]), torch.Tensor(np.vstack((f['action'][()][:, :7], f['action'][()][:, 7:])))
+        return torch.Tensor(self._observations[idx]).cuda(), torch.Tensor(self._actions[idx]).cuda()
+
+class BimanualBasicTrajectoryPolicyDataset(TrajectoryDataset):
+    def __init__(self, data_directory, device="cuda", onehot_goals=False, action_key='joint_pos'):
+        # data_directory = Path(data_directory)
+        self.file_list = glob.glob(os.path.join(data_directory, "*.hdf5"))
+
+        self._actions = []
+        self._observations = []
+        self.prev_idx = -1
+
+        print('Dataset Loading', action_key)
+
+        self.action = None
+        self.observation = None
+        self.seq_lens = []
+
+        print('Get seq lenghts')
+        for fname in tqdm.tqdm(self.file_list):
+            f = h5py.File(fname, 'r')
+            self.seq_lens.append(len(f['action']))
+        #     self._actions.append(f['action'][()])
+        #     # Should I resize it?
+        #     self._observations.append(f['observations']['images']['angle'][()])
+
+        # self.actions = np.concatenate(self._actions)
+
+    def __len__(self):
+        return len(self.file_list)
+
+    def get_seq_length(self, idx):
+        return self.seq_lens[idx]
+        # return int(len())
+
+    def __getitem__(self, idx):
+        # Caching dataset (only holds when data loader not using shuffle)
+        if idx != self.prev_idx:
+            self.prev_idx = idx
+            f = h5py.File(self.file_list[idx], 'r')
+            self.action = torch.Tensor(f['action'][()]).cuda()
+            self.observation = torch.Tensor(f['observations']['images']['angle'][()]).cuda()
+        return self.observation,  self.action
+
 
 class UR3TrajectoryDataset(TensorDataset, TrajectoryDataset):
     def __init__(
@@ -336,6 +446,8 @@ class PushTrajectorySequenceDataset(TensorDataset, TrajectoryDataset):
         return tuple(x[idx, :T] for x in self.tensors)
 
 
+
+
 class TrajectorySlicerDataset(TrajectoryDataset):
     def __init__(
         self,
@@ -388,6 +500,7 @@ class TrajectorySlicerDataset(TrajectoryDataset):
             print(
                 f"Ignored short sequences. To include all, set window <= {min_seq_length}."
             )
+        
 
     def get_seq_length(self, idx: int) -> int:
         if self.future_conditional:
@@ -399,6 +512,7 @@ class TrajectorySlicerDataset(TrajectoryDataset):
         return len(self.slices)
 
     def __getitem__(self, idx):
+        # print('get item start')
         i, start, end = self.slices[idx]
         if self.vqbet_get_future_action_chunk:
             if end - start < self.window:
@@ -506,7 +620,7 @@ class TrajectorySlicerDataset(TrajectoryDataset):
                 else:
                     # zeros placeholder T x obs_dim
                     _, obs_dim = values[0].shape
-                    future_obs = torch.zeros((self.future_seq_len, obs_dim)).cuda()
+                    future_obs = torch.zeros((self.future_seq_len, obs_dim))
 
             # [observations, actions, mask[, future_obs (goal conditional)]]
             values.append(future_obs)
@@ -514,6 +628,7 @@ class TrajectorySlicerDataset(TrajectoryDataset):
         # optionally apply transform
         if self.transform is not None:
             values = self.transform(values)
+        # print('get item end')
         return tuple(values)
 
 
@@ -685,6 +800,102 @@ def get_ant_train_val(
     return get_train_val_sliced(
         AntTrajectoryDataset(
             data_directory, onehot_goals=(goal_conditional == "onehot")
+        ),
+        train_fraction,
+        random_seed,
+        window_size,
+        action_window_size,
+        vqbet_get_future_action_chunk,
+        only_sample_tail=only_sample_tail,
+        future_conditional=(goal_conditional == "future"),
+        min_future_sep=min_future_sep,
+        future_seq_len=future_seq_len,
+        transform=transform,
+    )
+
+def get_clean_train_val(
+    data_directory,
+    train_fraction=0.9,
+    random_seed=42,
+    window_size=5,
+    action_window_size=1,
+    vqbet_get_future_action_chunk: bool = False,
+    only_sample_tail: bool = False,
+    goal_conditional: Optional[str] = None,
+    future_seq_len: Optional[int] = None,
+    min_future_sep: int = 0,
+    transform: Optional[Callable[[Any], Any]] = None,
+    action_key = 'joint_pos'
+):
+    if goal_conditional is not None:
+        assert goal_conditional in ["future", "onehot"]
+    return get_train_val_sliced(
+        BimanualTrajectoryDataset(
+            data_directory, onehot_goals=None, action_key=action_key
+        ),
+        train_fraction,
+        random_seed,
+        window_size,
+        action_window_size,
+        vqbet_get_future_action_chunk,
+        only_sample_tail=only_sample_tail,
+        future_conditional=(goal_conditional == "future"),
+        min_future_sep=min_future_sep,
+        future_seq_len=future_seq_len,
+        transform=transform,
+    )
+
+def get_clean_basic_train_val(
+    data_directory,
+    train_fraction=0.9,
+    random_seed=42,
+    window_size=5,
+    action_window_size=1,
+    vqbet_get_future_action_chunk: bool = False,
+    only_sample_tail: bool = False,
+    goal_conditional: Optional[str] = None,
+    future_seq_len: Optional[int] = None,
+    min_future_sep: int = 0,
+    transform: Optional[Callable[[Any], Any]] = None,
+    action_key = 'joint_pos'
+):
+    if goal_conditional is not None:
+        assert goal_conditional in ["future", "onehot"]
+    return get_train_val_sliced(
+        BimanualBasicTrajectoryDataset(
+            data_directory, onehot_goals=None, action_key=action_key
+        ),
+        train_fraction,
+        random_seed,
+        window_size,
+        action_window_size,
+        vqbet_get_future_action_chunk,
+        only_sample_tail=only_sample_tail,
+        future_conditional=(goal_conditional == "future"),
+        min_future_sep=min_future_sep,
+        future_seq_len=future_seq_len,
+        transform=transform,
+    )
+
+def get_clean_basic_policy_train_val(
+    data_directory,
+    train_fraction=0.995,
+    random_seed=42,
+    window_size=5,
+    action_window_size=1,
+    vqbet_get_future_action_chunk: bool = False,
+    only_sample_tail: bool = False,
+    goal_conditional: Optional[str] = None,
+    future_seq_len: Optional[int] = None,
+    min_future_sep: int = 0,
+    transform: Optional[Callable[[Any], Any]] = None,
+    action_key = 'joint_pos'
+):
+    if goal_conditional is not None:
+        assert goal_conditional in ["future", "onehot"]
+    return get_train_val_sliced(
+        BimanualBasicTrajectoryPolicyDataset(
+            data_directory, onehot_goals=None, action_key=action_key
         ),
         train_fraction,
         random_seed,

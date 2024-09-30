@@ -1,11 +1,12 @@
 
 # TODO fill these out
-dataset_path: PATH_TO_YOUR_[env_name]_DATASET # (i.e. /home/user/vqbet/vqbet_datasets_for_release)
-save_path: YOUR_SAVE_PATH # (i.e. /home/user/vq-bet)
-wandb_entity: YOUR_WANDB_ENTITY
+dataset_path: /home/jellyho/Bimanual_Imitation/vqbet_datasets_for_release # (i.e. /home/user/vqbet/vqbet_datasets_for_release)
+save_path: /home/jellyho/Bimanual_Imitation # (i.e. /home/user/vq-bet)
+wandb_entity: jellyho_
 
 datasets:
     ant: ${env_vars.dataset_path}/ant
     relay_kitchen: ${env_vars.dataset_path}/relay_kitchen
     pusht: ${env_vars.dataset_path}/pusht
     ur3: ${env_vars.dataset_path}/ur3
+    clean: /home/jellyho/clean

@@ -844,7 +844,7 @@ class VectorQuantize(nn.Module):
     ):
         orig_input = x
 
-        only_one = x.ndim == 2
+        only_one = x.ndim == 2 # batch and dim
 
         if only_one:
             assert not exists(mask)

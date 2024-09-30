@@ -11,7 +11,7 @@ from omegaconf import OmegaConf
 from vqvae.vqvae import *
 import wandb
 
-config_name = "pretrain_ant"
+config_name = "pretrain_clean"
 
 
 def seed_everything(random_seed: int):
@@ -36,13 +36,14 @@ def main(cfg):
     print(OmegaConf.to_yaml(cfg))
     seed_everything(cfg.seed)
     train_data, test_data = hydra.utils.instantiate(cfg.data)
+    print('Dataset Loaded')
     train_loader = torch.utils.data.DataLoader(
         train_data, batch_size=cfg.batch_size, shuffle=True, pin_memory=False
     )
     for epoch in tqdm.trange(cfg.epochs):
         for data in tqdm.tqdm(train_loader):
             obs, act, goal = (x.to(cfg.device) for x in data)
-
+            # print(obs.shape, act.shape, goal.shape)
             (
                 encoder_loss,
                 vq_loss_state,
