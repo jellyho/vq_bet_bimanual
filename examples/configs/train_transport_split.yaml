@@ -6,7 +6,7 @@ seed: 42
 window_size: 1
 goal_window_size: 10
 eval_window_size: 1
-batch_size: 256
+batch_size: 512
 epochs: 300
 eval_freq: 10
 eval_on_env_freq: 20
@@ -15,9 +15,9 @@ num_final_evals: 1
 num_final_eval_per_goal: 1
 action_window_size: 3
 sequentially_select: false
-vqvae_load_dir: "/home/jellyho/Bimanual_Imitation/checkpoints/AntMazeMultimodal-eval-v0/2024-09-22/clean_basic/clean_basic/trained_vqvae.pt"
+vqvae_load_dir: "/home/jellyho/Bimanual_Imitation/checkpoints/transport/2024-10-01/15-19-46/pretrain_transport/trained_vqvae.pt"
 goal_dim: 0
-run_name: "clean"
+run_name: "transport_split"
 action_dim: 7
 
 wandb:
@@ -32,15 +32,15 @@ optim:
 
 env:
   gym:
-    _target_: tabletop.sim_env.make_sim_env
-    task_name: sim_clean
-  act_dim: ${action_dim}
+    _target_: transport_env.get_robomimic_env
+    dataset_dir: ${env_vars.datasets.transport_config}
+  act_dim: 14
   obs_dim: 512
-  goal_dim: ${goal_dim}
+  goal_dim: 0
 
 data:
-  _target_: dataset.get_clean_basic_policy_train_val
-  data_directory: ${env_vars.datasets.clean}
+  _target_: dataset.get_transport_train_val
+  data_directory: ${env_vars.datasets.transport}
   goal_conditional: future
   window_size: ${window_size}
   future_seq_len: ${goal_window_size}
@@ -48,14 +48,15 @@ data:
   action_window_size: ${action_window_size}
   vqbet_get_future_action_chunk: true
   only_sample_tail: false
-  action_key: "joint_pos"
+  train_fraction: 0.99
+  vqvae: false
 
 save_every: 10
 save_path: "${env_vars.save_path}/checkpoints/${run_name}_policy/${now:%Y-%m-%d}/${now:%H-%M-%S}"
 load_path: null
 
 model:
-  _target_: vq_behavior_transformer.BehaviorTransformer
+  _target_: vq_behavior_transformer.BimanualBehaviorTransformer
   obs_dim: ${env.obs_dim}
   act_dim: ${env.act_dim}
   goal_dim: ${env.goal_dim}
@@ -63,6 +64,7 @@ model:
   act_window_size: ${action_window_size}
   sequentially_select: ${sequentially_select}
   visual_input: true
+  common_latent: false
   gpt_model:
     _target_: vq_behavior_transformer.GPT
     config:
@@ -84,3 +86,12 @@ model:
     load_dir: ${vqvae_load_dir}
   offset_loss_multiplier: 0.1
   secondary_code_multiplier: 3
+
+goal_fn:
+  _target_: ant_env.get_goal_fn
+  data_directory: ${env_vars.datasets.ant}
+  goal_conditional: ${data.goal_conditional}
+  seed: ${seed}
+  train_fraction: 0.95
+  goal_seq_len: ${goal_window_size}
+  unconditional: true
