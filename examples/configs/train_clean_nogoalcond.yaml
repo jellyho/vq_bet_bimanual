@@ -6,7 +6,7 @@ seed: 42
 window_size: 2
 goal_window_size: 10
 eval_window_size: 1
-batch_size: 256
+batch_size: 4
 epochs: 300
 eval_freq: 10
 eval_on_env_freq: 20
@@ -63,7 +63,7 @@ model:
   act_window_size: ${action_window_size}
   sequentially_select: ${sequentially_select}
   visual_input: true
-  common_latent: false
+  common_latent: true
   gpt_model:
     _target_: vq_behavior_transformer.GPT
     config:

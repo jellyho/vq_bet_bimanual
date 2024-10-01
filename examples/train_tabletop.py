@@ -67,10 +67,10 @@ def main(cfg):
     #     config=OmegaConf.to_container(cfg, resolve=True),
     # )
     # run.name = config_name
-    # run_name = run.name or "Offline"
-    # save_path = Path(cfg.save_path) / run_name
-    # save_path.mkdir(parents=True, exist_ok=False)
-    # video = VideoRecorder(dir_name=save_path)
+    run_name = config_name
+    save_path = Path(cfg.save_path) / run_name
+    save_path.mkdir(parents=True, exist_ok=False)
+    video = VideoRecorder(dir_name=save_path)
 
     @torch.no_grad()
     def eval_on_env(

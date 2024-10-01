@@ -382,8 +382,8 @@ class BimanualBasicTrajectoryDataset(TrajectoryDataset):
             self._actions.append(f['action'][()])
             self._observations.append(f['action'][()])
 
-        self._actions = torch.Tensor(self._actions).cuda()
-        self._observatiosn = torch.Tensor(self.observations).cuda()
+        # self._actions = torch.Tensor(self._actions).cuda()
+        # self._observatiosn = torch.Tensor(self.observations).cuda()
         self.actions = np.concatenate(self._actions)
 
     def __len__(self):

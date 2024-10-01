@@ -30,6 +30,15 @@ def seed_everything(random_seed: int):
 @hydra.main(config_path="configs", config_name=config_name, version_base="1.2")
 def main(cfg):
     print(OmegaConf.to_yaml(cfg))
+    if torch.cuda.is_available():
+        # Get the number of available GPUs
+        num_gpus = torch.cuda.device_count()
+        print(f"Number of available GPUs: {num_gpus}")
+
+        # Print information about each GPU
+        for i in range(num_gpus):
+            gpu = torch.cuda.get_device_properties(i)
+            print(f"GPU {i}: {gpu.name}, {gpu.total_memory / 1e9:.2f} GB")
     seed_everything(cfg.seed)
     train_data, test_data = hydra.utils.instantiate(cfg.data)
     train_loader = torch.utils.data.DataLoader(
