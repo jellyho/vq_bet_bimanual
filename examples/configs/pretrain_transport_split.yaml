@@ -6,7 +6,7 @@ seed: 42
 window_size: 5
 goal_window_size: 5
 eval_window_size: 5
-batch_size: 4096
+batch_size: 1024
 epochs: 1001
 eval_freq: 10
 eval_on_env_freq: 25
@@ -14,8 +14,8 @@ num_env_evals: 5
 num_final_evals: 20
 num_final_eval_per_goal: 5
 action_window_size: 3
-run_name: "transport"
-action_dim: 14
+action_dim: 7
+run_name: "transport_split"
 
 wandb:
   project: "vq-bet-bimanual"
@@ -35,7 +35,7 @@ env:
       _target_: gym.make
       id: AntMazeMultimodal-eval-v0
   obs_dim: 41
-  act_dim: 14
+  act_dim: 16
   goal_dim: 41
 
 data:
@@ -49,6 +49,7 @@ data:
   vqbet_get_future_action_chunk: false
   only_sample_tail: false
   vqvae: true
+  split: true
 
 save_every: 10
 save_path: "${env_vars.save_path}/checkpoints/${run_name}/${now:%Y-%m-%d}/${now:%H-%M-%S}"

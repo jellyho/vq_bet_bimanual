@@ -11,7 +11,7 @@ from omegaconf import OmegaConf
 from vqvae.vqvae import *
 import wandb
 
-config_name = "pretrain_clean"
+config_name = "pretrain_transport_split"
 
 
 def seed_everything(random_seed: int):
@@ -29,7 +29,8 @@ def main(cfg):
         config=OmegaConf.to_container(cfg, resolve=True),
     )
     # run_name = run.name or "Offline"
-    run.name = cfg.run_name
+    run.name = config_name
+    run_name = run.name
     save_path = Path(cfg.save_path) / run_name
     save_path.mkdir(parents=True, exist_ok=False)
 

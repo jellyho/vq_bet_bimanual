@@ -14,7 +14,7 @@ import wandb
 from video import VideoRecorder
 import pickle
 
-config_name = "train_clean_basic_nogoalcond"
+config_name = "train_clean_nogoalcond"
 
 if "MUJOCO_GL" not in os.environ:
     os.environ["MUJOCO_GL"] = "egl"
@@ -59,17 +59,18 @@ def main(cfg):
         learning_rate=cfg.optim.lr,
         betas=cfg.optim.betas,
     )
-    env = hydra.utils.instantiate(cfg.env.gym)
+    # env = hydra.utils.instantiate(cfg.env.gym)
     # goal_fn = hydra.utils.instantiate(cfg.goal_fn)
-    run = wandb.init(
-        project=cfg.wandb.project,
-        entity=cfg.wandb.entity,
-        config=OmegaConf.to_container(cfg, resolve=True),
-    )
-    run_name = run.name or "Offline"
-    save_path = Path(cfg.save_path) / run_name
-    save_path.mkdir(parents=True, exist_ok=False)
-    video = VideoRecorder(dir_name=save_path)
+    # run = wandb.init(
+    #     project=cfg.wandb.project,
+    #     entity=cfg.wandb.entity,
+    #     config=OmegaConf.to_container(cfg, resolve=True),
+    # )
+    # run.name = config_name
+    # run_name = run.name or "Offline"
+    # save_path = Path(cfg.save_path) / run_name
+    # save_path.mkdir(parents=True, exist_ok=False)
+    # video = VideoRecorder(dir_name=save_path)
 
     @torch.no_grad()
     def eval_on_env(

@@ -14,7 +14,7 @@ from vq_behavior_transformer.utils import MLP
 from vqvae.vqvae import VqVae
 
 
-class BehaviorTransformer(nn.Module):
+class BimanualBehaviorTransformer(nn.Module):
     GOAL_SPEC = Enum("GOAL_SPEC", "concat stack unconditional")
 
     def __init__(
@@ -32,6 +32,7 @@ class BehaviorTransformer(nn.Module):
         sequentially_select=False,
         visual_input=False,
         finetune_resnet=False,
+        common_latent=False,
     ):
         super().__init__()
         self._obs_dim = obs_dim
@@ -40,6 +41,9 @@ class BehaviorTransformer(nn.Module):
         self.obs_window_size = obs_window_size
         self.act_window_size = act_window_size
         self.sequentially_select = sequentially_select
+        
+        # added
+        self.common_latent = common_latent
         if goal_dim <= 0:
             self._cbet_method = self.GOAL_SPEC.unconditional
         elif obs_dim == goal_dim:
@@ -54,9 +58,10 @@ class BehaviorTransformer(nn.Module):
 
         self._G = self._vqvae_model.vqvae_groups  # G(number of groups)
         self._C = self._vqvae_model.vqvae_n_embed  # C(number of code integers)
+        print('number of embed', self._C)
         self._D = self._vqvae_model.embedding_dim  # D(embedding dims)
 
-        if self.sequentially_select:
+        if self.sequentially_select: # not common_latent nor split token
             print("use sequantial prediction for vq dictionary!")
             self._map_to_cbet_preds_bin1 = MLP(
                 in_channels=gpt_model.config.output_dim,
@@ -66,17 +71,28 @@ class BehaviorTransformer(nn.Module):
                 in_channels=gpt_model.config.output_dim + self._C,
                 hidden_channels=[512, self._C],
             )
-        else:
+        elif not self.common_latent:
+            print("Predict two tokens")
             self._map_to_cbet_preds_bin = MLP(
                 in_channels=gpt_model.config.output_dim,
                 hidden_channels=[1024, 1024, self._G * self._C],
+            )
+        else:
+            print("Use common latent")
+            self._map_to_cbet_preds_bin1 = MLP(
+                in_channels=gpt_model.config.output_dim,
+                hidden_channels=[512, 512, self._G * self._C],
+            )
+            self._map_to_cbet_preds_bin2 = MLP(
+                in_channels=gpt_model.config.output_dim,
+                hidden_channels=[512, 512, self._G * self._C],
             )
         self._map_to_cbet_preds_offset = MLP(
             in_channels=gpt_model.config.output_dim,
             hidden_channels=[
                 1024,
                 1024,
-                self._G * self._C * (act_dim * self.act_window_size),
+                self._G * self._C * (int(act_dim / 2) * self.act_window_size),
             ],
         )
 
@@ -128,7 +144,7 @@ class BehaviorTransformer(nn.Module):
     ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor], Dict[str, float]]:
         # Assume dimensions are N T D for N sequences of T timesteps with dimension D.
         if self.visual_input:
-            obs_seq = obs_seq.cuda()
+            print('input_shape', obs_seq.shape)
             if obs_seq.ndim == 3:
                 obs_seq = obs_seq.clone().detach()
                 obs_seq = self._resnet_header(obs_seq)
@@ -185,7 +201,17 @@ class BehaviorTransformer(nn.Module):
                 ),
                 dim=-2,
             )
+        # save obs_len, batch_size for later use
+        obs_len = obs_seq.shape[1]
+        batch_size = obs_seq.shape[0]
+
         if self._cbet_method == self.GOAL_SPEC.unconditional:
+            if not self.common_latent:
+                li = []
+                for t in range(obs_seq.shape[1]):
+                    li.append(obs_seq[:, t]) # input double obs
+                    li.append(obs_seq[:, t])
+                obs_seq = torch.stack(li, dim=1)
             gpt_input = obs_seq
         elif self._cbet_method == self.GOAL_SPEC.concat:
             gpt_input = torch.cat([goal_seq, obs_seq], dim=1)
@@ -193,12 +219,18 @@ class BehaviorTransformer(nn.Module):
             gpt_input = torch.cat([goal_seq, obs_seq], dim=-1)
         else:
             raise NotImplementedError
+        print('gpt_input', gpt_input.shape)
+        print('gpt_input', gpt_input.shape)
         gpt_output = self._gpt_model(gpt_input)
-
+        print('gpt_output', gpt_output.shape)
+        print('gpt_output', gpt_output.shape)
         if self._cbet_method == self.GOAL_SPEC.unconditional:
             gpt_output = gpt_output
         else:
             gpt_output = gpt_output[:, goal_seq.size(1) :, :]
+        # print(gpt_output.shape)
+        # G = 2 group vqvae, C = Number of code 32
+        # 256, 1024
         gpt_output = einops.rearrange(gpt_output, "N T (G C) -> (N T) (G C)", G=self._G)
         obs = einops.rearrange(obs_seq, "N T O -> (N T) O")
         obs = obs.unsqueeze(dim=1) # 1 NT O
@@ -232,7 +264,7 @@ class BehaviorTransformer(nn.Module):
             sampled_centers = torch.stack(
                 (sampled_centers1, sampled_centers2), axis=1
             )  # NT, G
-        else:
+        elif not self.common_latent: # predict two token
             cbet_logits = self._map_to_cbet_preds_bin(gpt_output)
             cbet_offsets = self._map_to_cbet_preds_offset(gpt_output)
             cbet_logits = einops.rearrange(
@@ -241,49 +273,94 @@ class BehaviorTransformer(nn.Module):
             cbet_offsets = einops.rearrange(
                 cbet_offsets, "(NT) (G C WA) -> (NT) G C WA", G=self._G, C=self._C
             )
+            # 256 * 2, 2 ,32, 7 * 3
             cbet_probs = torch.softmax(cbet_logits, dim=-1)
+            # print(cbet_probs.shape)
+            # print(cbet_probs.shape)
             NT, G, choices = cbet_probs.shape
+            # 256 * 2, 2, 32
+
             sampled_centers = einops.rearrange(
                 torch.multinomial(cbet_probs.view(-1, choices), num_samples=1),
                 "(NT G) 1 -> NT G",
                 NT=NT,
             )
+            # 256 * 2, 2
 
         indices = (
             torch.arange(NT).unsqueeze(1).cuda(),
             torch.arange(self._G).unsqueeze(0).cuda(),
             sampled_centers,
         )
+        # 256 * 2, 2, 256 * 2 2
+
+        # OFFSET :  256 * 2, 2 ,32, 7 * 3
         # Use advanced indexing to sample the values
+        print('offset', cbet_offsets.shape)
         sampled_offsets = cbet_offsets[indices]  # NT, G, W, A(?) or NT, G, A
 
         sampled_offsets = sampled_offsets.sum(dim=1)
+        print(sampled_offsets.shape)
+        print(sampled_offsets.shape)
+        # 256 * 2, 1, 21
         centers = self._vqvae_model.draw_code_forward(sampled_centers).view(
             NT, -1, self._D
         )
+        # centers : codeboook vector? 256 * 2, 2, 256
         return_decoder_input = einops.rearrange(
             centers.clone().detach(), "NT G D -> NT (G D)"
         )
+        # 256 * 2 , 2 * 256
         decoded_action = (
             self._vqvae_model.get_action_from_latent(return_decoder_input)
             .clone()
             .detach()
         )  # NT, A
+        print('decoded action', decoded_action.shape)
+        print('decoded action', decoded_action.shape)
         sampled_offsets = einops.rearrange(
             sampled_offsets, "NT (W A) -> NT W A", W=self._vqvae_model.input_dim_h
         )
+
         predicted_action = decoded_action + sampled_offsets
+
+        if not self.common_latent:
+            predicted_action = einops.rearrange(
+                predicted_action, "(N T) W A -> N T W A", N=batch_size, T=obs_len * 2, W=self._vqvae_model.input_dim_h
+            )
+            print('reshaped action', predicted_action.shape)
+            lir = []
+            lil = []
+            for i in range(obs_len):
+                lil.append(predicted_action[:, i])
+                lir.append(predicted_action[:, i + 1])
+            lil = torch.cat(lil, axis=0)
+            lir = torch.cat(lir, axis=0)
+            predicted_action = torch.cat([lil, lir], axis=2)
+            
+        print('predicted action', predicted_action.shape)
+        print('predicted action', predicted_action.shape)
+
+        print('action_seq.shape', action_seq.shape)
+        print('action_seq.shape', action_seq.shape)
+        # 256 * 2 3 7
         if action_seq is not None:
             n, total_w, act_dim = action_seq.shape
             act_w = self._vqvae_model.input_dim_h
             obs_w = total_w + 1 - act_w
             output_shape = (n, obs_w, act_w, act_dim)
             output = torch.empty(output_shape).to(action_seq.device)
+            print('output shape', output.shape)
             for i in range(obs_w):
                 output[:, i, :, :] = action_seq[:, i : i + act_w, :]
             action_seq = einops.rearrange(output, "N T W A -> (N T) W A")
+            print('new_action_seq.shape', action_seq.shape)
+            print('new_action_seq.shape', action_seq.shape)
             # Figure out the loss for the actions.
             # First, we need to find the closest cluster center for each action.
+            
+
+            ## pm 4:25
             state_vq, action_bins = self._vqvae_model.get_code(
                 action_seq
             )  # action_bins: NT, G
@@ -292,6 +369,7 @@ class BehaviorTransformer(nn.Module):
             if action_seq.ndim == 2:
                 action_seq = action_seq.unsqueeze(0)
 
+            # 512 3 7
             offset_loss = torch.nn.L1Loss()(action_seq, predicted_action)
 
             action_diff = F.mse_loss(
@@ -407,14 +485,14 @@ class BehaviorTransformer(nn.Module):
             betas=betas,
         )
 
-        if self.sequentially_select:
+        if self.sequentially_select or self.common_latent:
             optimizer1.add_param_group(
                 {"params": self._map_to_cbet_preds_bin1.parameters()}
             )
             optimizer1.add_param_group(
                 {"params": self._map_to_cbet_preds_bin2.parameters()}
             )
-        else:
+        elif not self.common_latent:
             optimizer1.add_param_group(
                 {"params": self._map_to_cbet_preds_bin.parameters()}
             )

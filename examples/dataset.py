@@ -313,7 +313,32 @@ class TransportActionDataset(TrajectoryDataset):
         return int(len(self._actions[idx]))
 
     def __getitem__(self, idx):
-        return torch.Tensor(self._observations[idx]).cuda(), torch.Tensor(self._actions[idx]).cuda()
+        return torch.Tensor(self._observations[idx]), torch.Tensor(self._actions[idx])
+
+class TransportActionSplitDataset(TrajectoryDataset):
+    def __init__(self, data_directory, device="cuda", onehot_goals=False):
+        self.file_list = glob.glob(os.path.join(data_directory, "*.hdf5"))
+
+        self._actions = []
+        self._observations = []
+
+        print('Dataset Loading')
+
+        for fname in tqdm.tqdm(self.file_list):
+            f = h5py.File(fname, 'r')
+            self._actions.append(np.vstack((f['action'][()][:, :7], f['action'][()][:, 7:])))
+            self._observations.append(np.vstack((f['action'][()][:, :7], f['action'][()][:, 7:])))
+
+        self.actions = np.concatenate(self._actions)
+
+    def __len__(self):
+        return len(self.file_list)
+
+    def get_seq_length(self, idx):
+        return int(len(self._actions[idx]))
+
+    def __getitem__(self, idx):
+        return torch.Tensor(self._observations[idx]), torch.Tensor(self._actions[idx])
 
 class BimanualBasicTrajectoryDataset(TrajectoryDataset):
     def __init__(self, data_directory, device="cuda", onehot_goals=False, action_key='joint_pos'):
@@ -858,26 +883,42 @@ def get_transport_train_val(
     future_seq_len: Optional[int] = None,
     min_future_sep: int = 0,
     transform: Optional[Callable[[Any], Any]] = None,
+    split=False,
     vqvae=False
 ):
     if goal_conditional is not None:
         assert goal_conditional in ["future", "onehot"]
     if vqvae:
-        return get_train_val_sliced(
-            TransportActionDataset(
-                data_directory, onehot_goals=None, action_key=action_key
-            ),
-            train_fraction,
-            random_seed,
-            window_size,
-            action_window_size,
-            vqbet_get_future_action_chunk,
-            only_sample_tail=only_sample_tail,
-            future_conditional=(goal_conditional == "future"),
-            min_future_sep=min_future_sep,
-            future_seq_len=future_seq_len,
-            transform=transform,
-        )
+        if split:
+            return get_train_val_sliced(
+                TransportActionSplitDataset(
+                    data_directory, onehot_goals=None),
+                train_fraction,
+                random_seed,
+                window_size,
+                action_window_size,
+                vqbet_get_future_action_chunk,
+                only_sample_tail=only_sample_tail,
+                future_conditional=(goal_conditional == "future"),
+                min_future_sep=min_future_sep,
+                future_seq_len=future_seq_len,
+                transform=transform,
+            )
+        else:
+            return get_train_val_sliced(
+                TransportActionDataset(
+                    data_directory, onehot_goals=None),
+                train_fraction,
+                random_seed,
+                window_size,
+                action_window_size,
+                vqbet_get_future_action_chunk,
+                only_sample_tail=only_sample_tail,
+                future_conditional=(goal_conditional == "future"),
+                min_future_sep=min_future_sep,
+                future_seq_len=future_seq_len,
+                transform=transform,
+            )
     else:
         return get_train_val_sliced(
             TransportActionDataset(
