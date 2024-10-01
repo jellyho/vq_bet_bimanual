@@ -144,7 +144,6 @@ class BimanualBehaviorTransformer(nn.Module):
     ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor], Dict[str, float]]:
         # Assume dimensions are N T D for N sequences of T timesteps with dimension D.
         if self.visual_input:
-            print('input_shape', obs_seq.shape)
             if obs_seq.ndim == 3:
                 obs_seq = obs_seq.clone().detach()
                 obs_seq = self._resnet_header(obs_seq)
@@ -219,18 +218,14 @@ class BimanualBehaviorTransformer(nn.Module):
             gpt_input = torch.cat([goal_seq, obs_seq], dim=-1)
         else:
             raise NotImplementedError
-        print('gpt_input', gpt_input.shape)
-        print('gpt_input', gpt_input.shape)
+
         gpt_output = self._gpt_model(gpt_input)
-        print('gpt_output', gpt_output.shape)
-        print('gpt_output', gpt_output.shape)
+
         if self._cbet_method == self.GOAL_SPEC.unconditional:
             gpt_output = gpt_output
         else:
             gpt_output = gpt_output[:, goal_seq.size(1) :, :]
-        # print(gpt_output.shape)
-        # G = 2 group vqvae, C = Number of code 32
-        # 256, 1024
+
         gpt_output = einops.rearrange(gpt_output, "N T (G C) -> (N T) (G C)", G=self._G)
         obs = einops.rearrange(obs_seq, "N T O -> (N T) O")
         obs = obs.unsqueeze(dim=1) # 1 NT O
@@ -270,100 +265,153 @@ class BimanualBehaviorTransformer(nn.Module):
             cbet_logits = einops.rearrange(
                 cbet_logits, "(NT) (G C) -> (NT) G C", G=self._G
             )
+
             cbet_offsets = einops.rearrange(
                 cbet_offsets, "(NT) (G C WA) -> (NT) G C WA", G=self._G, C=self._C
             )
-            # 256 * 2, 2 ,32, 7 * 3
             cbet_probs = torch.softmax(cbet_logits, dim=-1)
-            # print(cbet_probs.shape)
-            # print(cbet_probs.shape)
             NT, G, choices = cbet_probs.shape
-            # 256 * 2, 2, 32
 
             sampled_centers = einops.rearrange(
                 torch.multinomial(cbet_probs.view(-1, choices), num_samples=1),
                 "(NT G) 1 -> NT G",
                 NT=NT,
             )
-            # 256 * 2, 2
+        else: #common_latent
+            cbet_logits_l = self._map_to_cbet_preds_bin1(gpt_output)
+            cbet_logits_r = self._map_to_cbet_preds_bin2(gpt_output)
+            cbet_logits_l = einops.rearrange(
+                cbet_logits_l, "(N T) GC -> N T GC", T=obs_len
+            )
+            cbet_logits_r = einops.rearrange(
+                cbet_logits_r, "(N T) GC -> N T GC", T=obs_len
+            )
+            cbet_logits = []
+            # stack_logits
+            for i in range(obs_len):
+                cbet_logits.append(cbet_logits_l[:, i])
+                cbet_logits.append(cbet_logits_r[:, i])
+            cbet_logits = torch.stack(cbet_logits, axis=1)
+            cbet_logits = einops.rearrange(
+                cbet_logits, "N T GC -> (N T) GC"
+            )
+            cbet_logits = einops.rearrange(
+                cbet_logits, "NT (G C) -> NT G C", G=self._G
+            )
+
+            # stack_offsets
+            cbet_offsets = self._map_to_cbet_preds_offset(gpt_output)
+            cbet_offsets = einops.rearrange(
+                cbet_offsets, "(N T) GCWA -> N T GCWA", T=obs_len
+            )
+            cbet_offset_ls = []
+            for i in range(obs_len):
+                cbet_offset_ls.append(cbet_offsets[:, i])
+                cbet_offset_ls.append(cbet_offsets[:, i])
+            cbet_offsets = torch.stack(cbet_offset_ls, axis=1)
+            cbet_offsets = einops.rearrange(
+                cbet_offsets, "N T GCWA -> (N T) GCWA")
+            cbet_offsets = einops.rearrange(
+                cbet_offsets, "NT (G C WA) -> NT G C WA", G=self._G, C=self._C
+            )
+
+            cbet_probs = torch.softmax(cbet_logits, dim=-1)
+            NT, G, choices = cbet_probs.shape
+
+            sampled_centers = einops.rearrange(
+                torch.multinomial(cbet_probs.view(-1, choices), num_samples=1),
+                "(NT G) 1 -> NT G",
+                NT=NT,
+            )
 
         indices = (
             torch.arange(NT).unsqueeze(1).cuda(),
             torch.arange(self._G).unsqueeze(0).cuda(),
             sampled_centers,
         )
-        # 256 * 2, 2, 256 * 2 2
 
-        # OFFSET :  256 * 2, 2 ,32, 7 * 3
         # Use advanced indexing to sample the values
-        print('offset', cbet_offsets.shape)
         sampled_offsets = cbet_offsets[indices]  # NT, G, W, A(?) or NT, G, A
 
         sampled_offsets = sampled_offsets.sum(dim=1)
-        print(sampled_offsets.shape)
-        print(sampled_offsets.shape)
-        # 256 * 2, 1, 21
+
         centers = self._vqvae_model.draw_code_forward(sampled_centers).view(
             NT, -1, self._D
         )
-        # centers : codeboook vector? 256 * 2, 2, 256
+
         return_decoder_input = einops.rearrange(
             centers.clone().detach(), "NT G D -> NT (G D)"
         )
-        # 256 * 2 , 2 * 256
+
         decoded_action = (
             self._vqvae_model.get_action_from_latent(return_decoder_input)
             .clone()
             .detach()
         )  # NT, A
-        print('decoded action', decoded_action.shape)
-        print('decoded action', decoded_action.shape)
+
         sampled_offsets = einops.rearrange(
             sampled_offsets, "NT (W A) -> NT W A", W=self._vqvae_model.input_dim_h
         )
 
         predicted_action = decoded_action + sampled_offsets
 
-        if not self.common_latent:
-            predicted_action = einops.rearrange(
-                predicted_action, "(N T) W A -> N T W A", N=batch_size, T=obs_len * 2, W=self._vqvae_model.input_dim_h
-            )
-            print('reshaped action', predicted_action.shape)
-            lir = []
-            lil = []
-            for i in range(obs_len):
-                lil.append(predicted_action[:, i])
-                lir.append(predicted_action[:, i + 1])
-            lil = torch.cat(lil, axis=0)
-            lir = torch.cat(lir, axis=0)
-            predicted_action = torch.cat([lil, lir], axis=2)
-            
-        print('predicted action', predicted_action.shape)
-        print('predicted action', predicted_action.shape)
+        # if not self.common_latent:
+        predicted_action = einops.rearrange(
+            predicted_action, "(N T) W A -> N T W A", N=batch_size, T=obs_len * 2, W=self._vqvae_model.input_dim_h
+        )
+        decoded_action = einops.rearrange(
+            decoded_action, "(N T) W A -> N T W A", N=batch_size, T=obs_len * 2, W=self._vqvae_model.input_dim_h
+        )
 
-        print('action_seq.shape', action_seq.shape)
-        print('action_seq.shape', action_seq.shape)
-        # 256 * 2 3 7
+        lir, lil, dar, dal = [], [], [], []
+        for i in range(obs_len):
+            lil.append(predicted_action[:, i])
+            lir.append(predicted_action[:, i + 1])
+            dal.append(decoded_action[:, i])
+            dar.append(decoded_action[:, i + 1])
+        lil = torch.cat(lil, axis=0)
+        lir = torch.cat(lir, axis=0)
+        dar = torch.cat(dar, axis=0)
+        dal = torch.cat(dal, axis=0)
+        predicted_action = torch.cat([lil, lir], axis=2)
+        decoded_action = torch.cat([dal, dar], axis=2)
+            
         if action_seq is not None:
             n, total_w, act_dim = action_seq.shape
             act_w = self._vqvae_model.input_dim_h
             obs_w = total_w + 1 - act_w
             output_shape = (n, obs_w, act_w, act_dim)
             output = torch.empty(output_shape).to(action_seq.device)
-            print('output shape', output.shape)
             for i in range(obs_w):
                 output[:, i, :, :] = action_seq[:, i : i + act_w, :]
             action_seq = einops.rearrange(output, "N T W A -> (N T) W A")
-            print('new_action_seq.shape', action_seq.shape)
-            print('new_action_seq.shape', action_seq.shape)
             # Figure out the loss for the actions.
             # First, we need to find the closest cluster center for each action.
             
+            half_action_dim = int(act_dim / 2)
+            action_seq_l = action_seq[:, :, :half_action_dim]
+            action_seq_r = action_seq[:, :, half_action_dim:]
 
-            ## pm 4:25
-            state_vq, action_bins = self._vqvae_model.get_code(
-                action_seq
+            state_vq_l, action_bins_l = self._vqvae_model.get_code(
+                action_seq_l
+            ) 
+            state_vq_r, action_bins_r = self._vqvae_model.get_code(
+                action_seq_r
             )  # action_bins: NT, G
+            action_bins_l = einops.rearrange(action_bins_l, "(N T) G -> N T G", T=obs_w)
+            action_bins_r = einops.rearrange(action_bins_r, "(N T) G -> N T G", T=obs_w)
+            state_vq_l = einops.rearrange(state_vq_l, "(N T) G -> N T G", T=obs_w)
+            state_vq_r = einops.rearrange(state_vq_r, "(N T) G -> N T G", T=obs_w)
+
+            action_bins = []
+            state_vq = []
+            for i in range(obs_len):
+                action_bins.append(action_bins_l[:, i])
+                action_bins.append(action_bins_r[:, i])
+                state_vq.append(state_vq_l[:, i])
+                state_vq.append(state_vq_r[:, i])
+            action_bins = torch.cat(action_bins)
+            sate_vq = torch.cat(state_vq)
 
             # Now we can compute the loss.
             if action_seq.ndim == 2:

@@ -61,12 +61,12 @@ def main(cfg):
     )
     # env = hydra.utils.instantiate(cfg.env.gym)
     # goal_fn = hydra.utils.instantiate(cfg.goal_fn)
-    # run = wandb.init(
-    #     project=cfg.wandb.project,
-    #     entity=cfg.wandb.entity,
-    #     config=OmegaConf.to_container(cfg, resolve=True),
-    # )
-    # run.name = config_name
+    run = wandb.init(
+        project=cfg.wandb.project,
+        entity=cfg.wandb.entity,
+        config=OmegaConf.to_container(cfg, resolve=True),
+    )
+    run.name = config_name
     run_name = config_name
     save_path = Path(cfg.save_path) / run_name
     save_path.mkdir(parents=True, exist_ok=False)
