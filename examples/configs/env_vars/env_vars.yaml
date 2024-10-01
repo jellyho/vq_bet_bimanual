@@ -11,3 +11,4 @@ datasets:
     ur3: ${env_vars.dataset_path}/ur3
     clean: /home/jellyho/clean
     transport: /home/shared/Robomimic/transport
+    transport_config: /home/jellyho/Bimanual_Imitation/robomimic/datasets/transport/ph

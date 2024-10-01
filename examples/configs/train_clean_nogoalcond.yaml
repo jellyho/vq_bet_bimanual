@@ -17,7 +17,7 @@ action_window_size: 3
 sequentially_select: false
 vqvae_load_dir: "/home/jellyho/Bimanual_Imitation/checkpoints/AntMazeMultimodal-eval-v0/2024-09-22/14-40-58/earnest-cherry-30/trained_vqvae.pt"
 goal_dim: 0
-task: "clean_bimanual"
+run_name: "clean_split"
 action_dim: 7
 
 wandb:
@@ -51,7 +51,7 @@ data:
   action_key: "joint_pos"
 
 save_every: 10
-save_path: "${env_vars.save_path}/checkpoints/${task}_policy/${now:%Y-%m-%d}/${now:%H-%M-%S}"
+save_path: "${env_vars.save_path}/checkpoints/${run_name}_policy/${now:%Y-%m-%d}/${now:%H-%M-%S}"
 load_path: null
 
 model:
@@ -76,7 +76,7 @@ model:
   vqvae_model:
     _target_: vqvae.VqVae
     input_dim_h: ${action_window_size}
-    input_dim_w: 7
+    input_dim_w: ${action_dim}
     n_latent_dims: 512
     vqvae_n_embed: 32
     vqvae_groups: 2

@@ -290,6 +290,33 @@ class BimanualTrajectoryDataset(TrajectoryDataset):
     def __getitem__(self, idx):
         return torch.Tensor(self._observations[idx]).cuda(), torch.Tensor(self._actions[idx]).cuda()
 
+class TransportDataset(TrajectoryDataset):
+    def __init__(self, data_directory, device="cuda", onehot_goals=False):
+        self.file_list = glob.glob(os.path.join(data_directory, "*.hdf5"))
+
+        self._actions = []
+        self._observations = []
+
+        print('Dataset Loading')
+
+        for fname in tqdm.tqdm(self.file_list):
+            f = h5py.File(fname, 'r')
+            # print(len(f['action'][()]))
+            self._actions.append(torch.Tensor(f['action'][()]))
+            self._observations.append(torch.Tensor(f['observations/images/camera'][()]))
+        # self._actions = torch.Tensor(self._actions).cuda()
+        # self._observations = torch.Tensor(self.observations).cuda()
+        self.actions = np.concatenate(self._actions)
+
+    def __len__(self):
+        return len(self.file_list)
+
+    def get_seq_length(self, idx):
+        return int(len(self._actions[idx]))
+
+    def __getitem__(self, idx):
+        return torch.Tensor(self._observations[idx]), torch.Tensor(self._actions[idx])
+
 class TransportActionDataset(TrajectoryDataset):
     def __init__(self, data_directory, device="cuda", onehot_goals=False):
         self.file_list = glob.glob(os.path.join(data_directory, "*.hdf5"))
@@ -355,6 +382,8 @@ class BimanualBasicTrajectoryDataset(TrajectoryDataset):
             self._actions.append(f['action'][()])
             self._observations.append(f['action'][()])
 
+        self._actions = torch.Tensor(self._actions).cuda()
+        self._observatiosn = torch.Tensor(self.observations).cuda()
         self.actions = np.concatenate(self._actions)
 
     def __len__(self):
@@ -364,7 +393,7 @@ class BimanualBasicTrajectoryDataset(TrajectoryDataset):
         return int(len(self._actions[idx]))
 
     def __getitem__(self, idx):
-        return torch.Tensor(self._observations[idx]).cuda(), torch.Tensor(self._actions[idx]).cuda()
+        return self._observations[idx], self._actions[idx]
 
 class BimanualBasicTrajectoryPolicyDataset(TrajectoryDataset):
     def __init__(self, data_directory, device="cuda", onehot_goals=False, action_key='joint_pos'):
@@ -921,9 +950,8 @@ def get_transport_train_val(
             )
     else:
         return get_train_val_sliced(
-            TransportActionDataset(
-                data_directory, onehot_goals=None, action_key=action_key
-            ),
+            TransportDataset(
+                data_directory, onehot_goals=None),
             train_fraction,
             random_seed,
             window_size,

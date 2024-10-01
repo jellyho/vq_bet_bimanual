@@ -14,7 +14,7 @@ import wandb
 from video import VideoRecorder
 import pickle
 
-config_name = "train_clean_basic_nogoalcond"
+config_name = "train_transport"
 
 if "MUJOCO_GL" not in os.environ:
     os.environ["MUJOCO_GL"] = "egl"
@@ -56,7 +56,9 @@ def main(cfg):
         entity=cfg.wandb.entity,
         config=OmegaConf.to_container(cfg, resolve=True),
     )
-    run_name = run.name or "Offline"
+    run.name = config_name
+    run_name = run.name
+    # run_name = run.name or "Offline"
     save_path = Path(cfg.save_path) / run_name
     save_path.mkdir(parents=True, exist_ok=False)
     video = VideoRecorder(dir_name=save_path)
@@ -76,13 +78,17 @@ def main(cfg):
         avg_final_coverage = []  # only used in pusht env
         for goal_idx in range(num_evals):
             if videorecorder is not None:
+                print('v recorder init')
                 videorecorder.init(enabled=(goal_idx == 0))
             for _ in range(num_eval_per_goal):
                 obs_stack = deque(maxlen=cfg.eval_window_size)
+                print('env_reset')
                 obs_stack.append(env.reset())
                 done, step, total_reward = False, 0, 0
                 goal, _ = goal_fn(env, obs_stack[-1], goal_idx, step)
+                print('run eval episode', goal_idx)
                 while not done:
+                    # print(step, done)
                     obs = torch.from_numpy(np.stack(obs_stack)).float().to(cfg.device)
                     goal = torch.as_tensor(goal, dtype=torch.float32, device=cfg.device)
                     action, _, _ = cbet_model(obs.unsqueeze(0), goal.unsqueeze(0), None)
@@ -119,6 +125,7 @@ def main(cfg):
                     avg_max_coverage.append(info["max_coverage"])
                     avg_final_coverage.append(info["final_coverage"])
                 completion_id_list.append(info["all_completions_ids"])
+                print('run eval episode fin')
             videorecorder.save("eval_{}_{}.mp4".format(epoch, goal_idx))
         return (
             avg_reward / (num_evals * num_eval_per_goal),
@@ -130,12 +137,14 @@ def main(cfg):
     for epoch in tqdm.trange(cfg.epochs):
         cbet_model.eval()
         if (epoch % cfg.eval_on_env_freq == 0):
+            print('eval_function_start')
             avg_reward, completion_id_list, max_coverage, final_coverage = eval_on_env(
                 cfg,
                 videorecorder=video,
                 epoch=epoch,
                 num_eval_per_goal=cfg.num_final_eval_per_goal,
             )
+            print('eval_function_start')
             with open("{}/completion_idx_{}.json".format(save_path, epoch), "wb") as fp:
                 pickle.dump(completion_id_list, fp)
             wandb.log({"eval_on_env": avg_reward})
